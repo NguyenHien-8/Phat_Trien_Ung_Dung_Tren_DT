@@ -1,7 +1,7 @@
 #include <Arduino.h>
 
 void setup() {
-  pinMode(2, OUTPUT);
+// pinMode(2, OUTPUT);
   Serial.begin(115200);
 }
 
