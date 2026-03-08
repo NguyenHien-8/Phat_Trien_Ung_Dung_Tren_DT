@@ -1,0 +1,48 @@
+Giải thích và tối ưu
+Khởi tạo gọn gàng
+FingerprintManager quản lý phần cứng, FingerprintDetect nhận con trỏ Adafruit_Fingerprint từ manager – dùng chung một đối tượng cảm biến, tiết kiệm bộ nhớ.
+
+Detect không chặn
+Hàm detect() và fastDetect() trả về ngay lập tức:
+
+ID dương (1‑127) khi tìm thấy.
+
+-1 khi không có ngón tay.
+
+các giá trị âm khác khi lỗi (tra cứu trong Adafruit_Fingerprint.h).
+
+Nhờ vậy, loop() có thể tiếp tục xử lý các tác vụ khác (đọc Serial, cập nhật hiển thị, v.v.).
+
+Điều khiển linh hoạt
+Các lệnh Serial cho phép:
+
+Chuyển đổi giữa chế độ nhanh và chậm.
+
+Bật/tắt debug (in chi tiết từng bước).
+
+Xem số lượng mẫu hiện có.
+
+Hiển thị hướng dẫn.
+
+Phản hồi người dùng
+
+Khi phát hiện vân tay, in ID và độ tin cậy.
+
+Khi không có ngón, im lặng (trừ khi debug bật) để tránh spam.
+
+Debug in ra thông tin chi tiết của từng bước (lấy ảnh, chuyển đổi, tìm kiếm) do chính lớp FingerprintDetect cung cấp.
+
+Tối ưu tài nguyên
+
+Debug chỉ hoạt động khi được bật qua setDebug().
+
+Delay 50ms cuối loop giúp giảm tải CPU, không ảnh hưởng đến khả năng phát hiện vì cảm biến tự quản lý thời gian chờ ngón tay.
+
+Sử dụng
+Nạp code lên ESP32.
+
+Mở Serial Monitor (115200 baud).
+
+Đặt ngón tay lên cảm biến, chương trình sẽ in ra ID tìm thấy.
+
+Dùng các lệnh s, f, d, c, h để điều khiển.

@@ -1,0 +1,42 @@
+Giải thích và tối ưu
+Khởi tạo gọn gàng
+FingerprintManager quản lý toàn bộ phần cứng (UART, password). Chỉ cần gọi begin() một lần.
+FingerprintEnroll nhận con trỏ Adafruit_Fingerprint từ manager, đảm bảo dùng chung một đối tượng cảm biến.
+
+Enroll không chặn
+Hàm enroll.enroll(id) được gọi mỗi vòng lặp. Nó trả về:
+
+FINGERPRINT_ENROLL_CONTINUE (0xFD): quá trình chưa kết thúc.
+
+FINGERPRINT_OK: thành công.
+
+Mã lỗi khác: thất bại.
+
+Nhờ vậy, chương trình không bị treo trong khi chờ người dùng đặt/ rút ngón tay.
+
+Phản hồi người dùng
+
+getStepString() cung cấp mô tả bước hiện tại (ví dụ: "Place first finger").
+
+In bước mỗi 500ms để tránh spam Serial, nhưng vẫn đủ thông tin.
+
+Hỗ trợ lệnh cancel để hủy giữa chừng.
+
+Xử lý lỗi
+Khi enroll thất bại, mã lỗi được in dạng HEX. Bạn có thể đối chiếu với các hằng số trong Adafruit_Fingerprint.h để thông báo chi tiết hơn.
+
+Tối ưu bộ nhớ
+Các lớp sử dụng con trỏ, không sao chép dữ liệu thừa. Debug chỉ hoạt động khi được cấp Stream.
+
+Sử dụng
+Nạp code lên ESP32.
+
+Mở Serial Monitor (115200 baud).
+
+Gõ một số từ 1 đến 127 để bắt đầu ghi danh.
+
+Làm theo hướng dẫn trên màn hình: đặt ngón tay, rút ra, đặt lại lần hai.
+
+Kết thúc thành công sẽ in ra ID đã lưu.
+
+Muốn hủy giữa chừng, gõ cancel.

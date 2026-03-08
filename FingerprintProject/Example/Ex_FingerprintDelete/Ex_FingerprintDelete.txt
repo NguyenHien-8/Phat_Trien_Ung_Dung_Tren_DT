@@ -1,0 +1,36 @@
+Giải thích và tối ưu
+Khởi tạo gọn gàng
+FingerprintManager quản lý phần cứng, FingerprintDelete nhận con trỏ Adafruit_Fingerprint từ manager – dùng chung một đối tượng cảm biến, tiết kiệm bộ nhớ.
+
+Xóa không block
+Các hàm deleteFingerprint() và deleteAll() là các hàm blocking (vì giao tiếp UART và chờ phản hồi từ cảm biến), nhưng thời gian thực hiện rất ngắn (vài chục ms). Vì vậy, chúng ta vẫn gọi trực tiếp trong processCommand() mà không ảnh hưởng đến các tác vụ khác trong loop().
+
+Giao diện dòng lệnh thân thiện
+
+Hỗ trợ các lệnh cơ bản, có kiểm tra ID hợp lệ.
+
+Phản hồi rõ ràng kết quả xóa (thành công hoặc mã lỗi).
+
+Cho phép bật/tắt debug để xem thông tin chi tiết từ lớp FingerprintDelete.
+
+Tối ưu tài nguyên
+
+Debug chỉ hoạt động khi được bật qua setDebug().
+
+Không sử dụng delay() gây block, việc đọc lệnh được thực hiện không đồng bộ.
+
+Dễ mở rộng
+Bạn có thể dễ dàng thêm các lệnh mới (ví dụ: liệt kê danh sách ID, đếm số mẫu) bằng cách sử dụng FingerprintDetect với cùng con trỏ manager.getFingerprint().
+
+Sử dụng
+Nạp code lên ESP32.
+
+Mở Serial Monitor (115200 baud).
+
+Gõ help để xem hướng dẫn.
+
+Gõ delete 5 để xóa ID 5.
+
+Gõ deleteall để xóa toàn bộ.
+
+Gõ debug để bật/tắt chế độ debug.
