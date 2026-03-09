@@ -13,7 +13,7 @@ const char *password = "thanhnguyen201077";
 const uint8_t ledPins[] = {7, 6, 5, 4}; 
 const uint8_t numLeds = 4;
 
-// --- THÔNG TIN SUPABASE ---
+// --- INFO SUPABASE ---
 const char* supabaseHost = "lzpngxifvvmurwwfoskw.supabase.co"; 
 const char* supabaseSyncUrl = "https://lzpngxifvvmurwwfoskw.supabase.co/rest/v1/rpc/sync_sensor_fingerprints";
 const char* supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx6cG5neGlmdnZtdXJ3d2Zvc2t3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MjI0ODksImV4cCI6MjA4ODI5ODQ4OX0.CstZrfW8_APLUSypHRh9ORHek_RN2OPgplEthzH3xGM";
@@ -32,7 +32,8 @@ const uint16_t interval_disconnect = 20000;
 const uint16_t interval_restartEsp32 = 50000;
 
 bool shouldSyncFingerprints = false; 
-bool hasBootSynced = false; // BỔ SUNG: Cờ kiểm tra đã đồng bộ lúc khởi động chưa
+bool hasBootSynced = false;
+bool isWebSocketInit = false; // Cờ kiểm tra trạng thái khởi tạo WS
 
 enum WifiState {
   WS_DISCONNECTED, 
@@ -50,6 +51,7 @@ void RestartESP32();
 void SyncFingerprintsToSupabase(); 
 void initWebSocket();
 
+// XỬ LÝ SỰ KIỆN WEBSOCKET
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   switch(type) {
     case WStype_DISCONNECTED:
@@ -58,15 +60,17 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
       
     case WStype_CONNECTED: {
       Serial.println("[WS] Da ket noi den Supabase Realtime!");
-      String joinMsg = "{\"topic\":\"realtime:public:device_commands\",\"event\":\"phx_join\",\"payload\":{},\"ref\":\"1\"}";
+      // CHỈNH SỬA: Payload chuẩn của Supabase Phoenix Channel để lắng nghe thay đổi của bảng
+      String joinMsg = "{\"topic\":\"realtime:public:device_commands\",\"event\":\"phx_join\",\"payload\":{\"config\":{\"postgres_changes\":[{\"event\":\"INSERT\",\"schema\":\"public\",\"table\":\"device_commands\"}]}},\"ref\":\"1\"}";
       webSocket.sendTXT(joinMsg);
       break;
     }
       
     case WStype_TEXT: {
       String msg = (char*)payload;
+      // KHI CÓ INSERT VÀO BẢNG device_commands CHỨA CHỮ SYNC_FINGERPRINTS
       if(msg.indexOf("\"type\":\"INSERT\"") > 0 && msg.indexOf("SYNC_FINGERPRINTS") > 0) {
-        Serial.println("\n[SUPABASE REALTIME] >> NHAN DUOC LENH TU APP: SYNC_FINGERPRINTS!");
+        Serial.println("\n[SUPABASE REALTIME] >> NHAN DUOC LENH TU APP: Yeu cau dong bo van tay!");
         shouldSyncFingerprints = true; 
       }
       break;
@@ -87,6 +91,7 @@ void initWebSocket() {
   webSocket.beginSSL(supabaseHost, 443, ws_path.c_str());
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000); 
+  isWebSocketInit = true;
 }
 
 void WiFiEvent(WiFiEvent_t event) {
@@ -108,12 +113,15 @@ void WiFiEvent(WiFiEvent_t event) {
       Serial.print("IP Address: ");
       Serial.println(WiFi.localIP());
       currentWifiState = WS_CONNECTED;
+      // CHỈNH SỬA: Phải khởi tạo WebSocket sau khi có mạng
+      if(!isWebSocketInit) {
+        initWebSocket();
+      }
       break;
 
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      Serial.println(">> MAT KET NOI! Dang thu ket noi lai...");
+      Serial.println(">> MAT KET NOI WIFI!");
       currentWifiState = WS_DISCONNECTED;
-      // Reset lại cờ khởi động nếu mất kết nối hoàn toàn để phòng lỗi (tuỳ chọn)
       hasBootSynced = false; 
       break;
   }
@@ -127,7 +135,6 @@ void setup() {
     digitalWrite(ledPins[i], HIGH);
   }
 
-  // Khởi tạo cảm biến vân tay
   fpManager.setDebug(&Serial);
   fpManager.begin();
 
@@ -143,20 +150,22 @@ void loop() {
       break;
 
     case WS_CONNECTED: {
+      // DUY TRÌ KẾT NỐI WEBSOCKET
       webSocket.loop();
       
+      // Heartbeat để Supabase không ngắt kết nối
       if (millis() - lastHeartbeat > 30000) {
         webSocket.sendTXT("{\"topic\":\"phoenix\",\"event\":\"heartbeat\",\"payload\":{},\"ref\":\"heartbeat\"}");
         lastHeartbeat = millis();
       }
 
       if (!hasBootSynced) {
-        hasBootSynced = true; // Chốt cờ ngay để không bị lặp vô hạn
-        Serial.println("\n[SYSTEM] ESP32 khoi dong xong. Tu dong doc AS608 va dong bo len Supabase...");
+        hasBootSynced = true; 
+        Serial.println("\n[SYSTEM] ESP32 khoi dong xong. Tu dong doc AS608 va dong bo lan dau...");
         SyncFingerprintsToSupabase();
       }
 
-      // XỬ LÝ KHI CÓ LỆNH THỦ CÔNG TỪ APP (THÔNG QUA WEBSOCKET)
+      // NẾU NHẬN ĐƯỢC LỆNH PUSH TỪ SUPABASE
       if (shouldSyncFingerprints) {
         shouldSyncFingerprints = false; 
         SyncFingerprintsToSupabase();
@@ -175,13 +184,12 @@ void loop() {
   }
 }
 
-// =======================================================
 // HÀM ĐỌC VÂN TAY VÀ ĐẨY LÊN SUPABASE
-// =======================================================
 void SyncFingerprintsToSupabase() {
-  Serial.println("\n>> BAT DAU DONG BO VAN TAY LEN SUPABASE...");
+  Serial.println("\n>> BAT DAU DOC AS608 VA DONG BO LEN DATABASE...");
   std::vector<String> registeredIds = fpManager.getRegisteredIds();
 
+  // Tạo JSON Payload
   StaticJsonDocument<1024> doc;
   JsonArray array = doc.createNestedArray("sensor_ids");
   for (String id : registeredIds) {
@@ -193,17 +201,18 @@ void SyncFingerprintsToSupabase() {
   Serial.print("Payload gui di: ");
   Serial.println(requestBody);
 
+  // Gửi API
   HTTPClient http;
   http.begin(supabaseSyncUrl);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("apikey", supabaseAnonKey);
-  http.addHeader("Authorization", String("Bearer ") + supabaseAnonKey);
+  http.addHeader("Authorization", String("Bearer ") + String(supabaseAnonKey));
 
   int httpResponseCode = http.POST(requestBody);
 
   if (httpResponseCode > 0) {
     Serial.printf(">> HTTP Response code: %d\n", httpResponseCode);
-    Serial.println(">> DA HOAN THANH CAP NHAT DATABASE!\n");
+    Serial.println(">> DA HOAN THANH CAP NHAT TRANG THAI VAN TAY!\n");
   } else {
     Serial.printf(">> Loi gui du lieu HTTP: %d\n", httpResponseCode);
   }

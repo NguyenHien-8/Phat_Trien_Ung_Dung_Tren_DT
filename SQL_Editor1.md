@@ -1,6 +1,17 @@
-# Supabase Database Schema
+# Supabase Database
 
 ```sql
+-- Kích hoạt extension pgcrypto (nếu chưa có) để mã hóa password
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Khởi tạo các giá trị token mặc định cho user hiện tại (tránh lỗi null)
+UPDATE auth.users 
+SET 
+    confirmation_token = COALESCE(confirmation_token, ''), 
+    recovery_token = COALESCE(recovery_token, ''), 
+    email_change_token_new = COALESCE(email_change_token_new, ''), 
+    email_change = COALESCE(email_change, '');
+
 -- ==========================================
 -- PHẦN 1: CẤU TRÚC BẢNG VÀ USER AUTH
 -- ==========================================
@@ -14,94 +25,126 @@ CREATE TABLE IF NOT EXISTS public.teachers (
     user_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE
 );
 
+DROP TABLE IF EXISTS public.teacher_ids CASCADE;
+
 CREATE TABLE IF NOT EXISTS public.teacher_ids (
     id SERIAL PRIMARY KEY,
     teacher_id TEXT UNIQUE NOT NULL,
-    is_registered BOOLEAN DEFAULT FALSE,
+    email TEXT UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-INSERT INTO public.teacher_ids (teacher_id) VALUES
-('TNHGV01'), ('TNHGV02'), ('TNHGV03'), ('TNHGV04'), ('TNHGV05')
+-- Cập nhật data mẫu cho giáo viên
+INSERT INTO public.teacher_ids (teacher_id, email) VALUES
+('TNHGV01', 'trannguyenhien29085@gmail.com'), 
+('TNHGV02', 'nhanb2305247@student.ctu.edu.vn'), 
+('TNHGV03', 'toanb2305266@student.ctu.edu.vn'), 
+('TNHGV04', 'tilb2305264@student.ctu.edu.vn'), 
+('TNHGV05', 'longb2305238@student.ctu.edu.vn')
 ON CONFLICT (teacher_id) DO NOTHING;
 
-CREATE OR REPLACE FUNCTION public.check_teacher_before_signup(
-    p_teacher_id TEXT, p_email TEXT
+DROP FUNCTION IF EXISTS public.signup_teacher(TEXT, TEXT, TEXT, TEXT);
+
+-- ==========================================
+-- HÀM SIGN UP (XỬ LÝ ĐĂNG KÝ GIÁO VIÊN)
+-- ==========================================
+CREATE OR REPLACE FUNCTION public.signup_teacher(
+    p_teacher_id TEXT, 
+    p_email TEXT, 
+    p_password TEXT, 
+    p_name TEXT
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
-    v_valid_count INT; v_teacher_exists INT; v_email_exists INT;
+    v_db_email TEXT; v_db_teacher_id TEXT; v_new_user_id UUID;
 BEGIN
-    SELECT COUNT(*) INTO v_valid_count FROM public.teacher_ids WHERE teacher_id = p_teacher_id AND is_registered = FALSE;
-    SELECT COUNT(*) INTO v_teacher_exists FROM public.teachers WHERE teacher_id = p_teacher_id;
-    SELECT COUNT(*) INTO v_email_exists FROM public.teachers WHERE email = p_email;
-
-    IF v_valid_count = 0 THEN
-        IF EXISTS (SELECT 1 FROM public.teacher_ids WHERE teacher_id = p_teacher_id AND is_registered = TRUE) OR v_teacher_exists > 0 THEN
-            RETURN jsonb_build_object('success', false, 'message', 'The teacher is ID has been registered.');
-        ELSE
-            RETURN jsonb_build_object('success', false, 'message', 'The teacher ID is invalid.');
-        END IF;
-    ELSIF v_email_exists > 0 THEN
-        RETURN jsonb_build_object('success', false, 'message', 'Email has already been used.');
-    ELSE
-        RETURN jsonb_build_object('success', true, 'message', 'Registration is available.');
+    IF EXISTS (SELECT 1 FROM auth.users WHERE email = p_email) OR 
+       EXISTS (SELECT 1 FROM public.teachers WHERE teacher_id = p_teacher_id) THEN
+        RETURN jsonb_build_object('success', false, 'message', 'The teacher has already been registered.');
     END IF;
+
+    SELECT email INTO v_db_email FROM public.teacher_ids WHERE teacher_id = p_teacher_id;
+    SELECT teacher_id INTO v_db_teacher_id FROM public.teacher_ids WHERE email = p_email;
+
+    IF v_db_email IS NULL AND v_db_teacher_id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Both The Email And Teacher Id Are Incorrect');
+    ELSIF v_db_email IS NOT NULL AND v_db_email != p_email THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Incorrect Email Sign Up');
+    ELSIF v_db_teacher_id IS NOT NULL AND v_db_teacher_id != p_teacher_id THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Incorrect Teacher Id Sign Up');
+    ELSIF v_db_email = p_email AND v_db_teacher_id = p_teacher_id THEN
+        v_new_user_id := gen_random_uuid();
+        
+        -- Insert vào auth.users 
+        INSERT INTO auth.users (
+            instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, 
+            raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+            confirmation_token, recovery_token, email_change_token_new, email_change
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000000', v_new_user_id, 'authenticated', 'authenticated', 
+            p_email, crypt(p_password, gen_salt('bf')), NOW(), 
+            '{"provider":"email","providers":["email"]}'::jsonb, 
+            jsonb_build_object('teacher_id', p_teacher_id, 'name', p_name), NOW(), NOW(),
+            '', '', '', ''
+        );
+
+        -- Thêm vào auth.identities
+        INSERT INTO auth.identities (
+            id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at
+        ) VALUES (
+            gen_random_uuid(), v_new_user_id, v_new_user_id::text, 
+            jsonb_build_object('sub', v_new_user_id, 'email', p_email, 'email_verified', true, 'phone_verified', false),
+            'email', NOW(), NOW(), NOW()
+        );
+
+        RETURN jsonb_build_object('success', true, 'message', 'Sign Up Success');
+    ELSE
+        RETURN jsonb_build_object('success', false, 'message', 'Invalid credentials');
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Database Error: ' || SQLERRM);
 END;
 $$;
 
--- XÓA BỎ HÀM LOGIN CŨ (theo teacher_id)
-DROP FUNCTION IF EXISTS public.signin_with_teacher_id(TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.signin_with_email(TEXT, TEXT);
 
--- THÊM HÀM MỚI: KIỂM TRA ĐĂNG NHẬP BẰNG EMAIL & PASSWORD
+-- ==========================================
+-- HÀM SIGN IN (XỬ LÝ ĐĂNG NHẬP)
+-- ==========================================
 CREATE OR REPLACE FUNCTION public.signin_with_email(
     p_email TEXT, p_password TEXT
 ) RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
-    v_user_id UUID; 
-    v_encrypted_pw TEXT;
-    v_teacher_id TEXT;
+    v_user_id UUID; v_encrypted_pw TEXT; v_teacher_id TEXT;
 BEGIN
-    -- Lấy thông tin user từ bảng auth.users (Bảng nội bộ của Supabase)
     SELECT u.id, u.encrypted_password, t.teacher_id 
     INTO v_user_id, v_encrypted_pw, v_teacher_id
     FROM auth.users u
     LEFT JOIN public.teachers t ON u.id = t.user_id
     WHERE u.email = p_email;
 
-    -- 1. Nếu email không tồn tại -> Sai Email
     IF v_user_id IS NULL THEN 
-        RETURN jsonb_build_object('success', false, 'message', 'Incorrect Email.'); 
+        RETURN jsonb_build_object('success', false, 'message', 'Incorrect Email Sign In'); 
     END IF;
 
-    -- 2. Nếu email tồn tại -> Kiểm tra Password
     IF v_encrypted_pw = crypt(p_password, v_encrypted_pw) THEN
-        -- 3. Đúng cả hai
-        RETURN jsonb_build_object(
-            'success', true, 
-            'message', 'Login Success.', 
-            'email', p_email, 
-            'teacher_id', v_teacher_id
-        );
+        RETURN jsonb_build_object('success', true, 'message', 'Sign In Success', 'email', p_email, 'teacher_id', v_teacher_id);
     ELSE
-        -- 4. Sai Password
-        RETURN jsonb_build_object('success', false, 'message', 'Incorrect Password.');
+        RETURN jsonb_build_object('success', false, 'message', 'Incorrect Password Sign In');
     END IF;
 END;
 $$;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 
+-- Trigger tự động thêm giáo viên vào bảng public.teachers
 CREATE OR REPLACE FUNCTION public.handle_new_user() RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
     v_teacher_id TEXT; v_name TEXT;
 BEGIN
     v_teacher_id := NEW.raw_user_meta_data->>'teacher_id';
     v_name := NEW.raw_user_meta_data->>'name';
-
     INSERT INTO public.teachers (user_id, teacher_id, email, name)
     VALUES (NEW.id, v_teacher_id, NEW.email, v_name);
-
-    UPDATE public.teacher_ids SET is_registered = TRUE WHERE teacher_id = v_teacher_id;
     RETURN NEW;
 END;
 $$;
@@ -140,7 +183,7 @@ CREATE TABLE IF NOT EXISTS public.students (
 );
 
 -- ==========================================
--- PHẦN 3: THIẾT LẬP PHÂN QUYỀN RLS
+-- PHẦN 3: THIẾT LẬP PHÂN QUYỀN RLS CƠ BẢN
 -- ==========================================
 ALTER TABLE public.classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.teacher_class ENABLE ROW LEVEL SECURITY;
@@ -169,81 +212,55 @@ RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY INVOKER
 AS $$
+-- (Giữ nguyên logic của bạn)
 DECLARE
-    item JSONB;
-    v_action TEXT;
-    v_student_id TEXT;
-    v_name TEXT;
-    v_class_id UUID;
-    v_fingerprint_id TEXT;
-    
-    v_existing_id UUID;
-    v_existing_name TEXT;
-    v_existing_fingerprint TEXT;
-    v_existing_class_id UUID;
-    
+    item JSONB; v_action TEXT; v_student_id TEXT; v_name TEXT; v_class_id UUID; v_fingerprint_id TEXT;
+    v_existing_id UUID; v_existing_name TEXT; v_existing_fingerprint TEXT; v_existing_class_id UUID;
     results JSONB := '[]'::JSONB;
 BEGIN
-    IF auth.uid() IS NULL THEN
-        RETURN jsonb_build_object('success', false, 'message', 'Unauthorized user.');
-    END IF;
+    IF auth.uid() IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Unauthorized user.'); END IF;
 
     FOR item IN SELECT * FROM jsonb_array_elements(payload)
     LOOP
-        v_action := item->>'action'; 
-        v_student_id := item->>'student_id';
-        v_name := item->>'name';
-        v_class_id := (item->>'class_id')::UUID;
-        v_fingerprint_id := item->>'fingerprint_id';
+        v_action := item->>'action'; v_student_id := item->>'student_id'; v_name := item->>'name';
+        v_class_id := (item->>'class_id')::UUID; v_fingerprint_id := item->>'fingerprint_id';
 
         IF v_action = 'delete' THEN
             DELETE FROM public.students WHERE student_id = v_student_id;
             results := results || jsonb_build_object('student_id', v_student_id, 'status', 'deleted', 'message', 'The student has been removed.');
-            
         ELSIF v_action = 'save' THEN
-            SELECT id, name, fingerprint_id, class_id
-            INTO v_existing_id, v_existing_name, v_existing_fingerprint, v_existing_class_id
+            SELECT id, name, fingerprint_id, class_id INTO v_existing_id, v_existing_name, v_existing_fingerprint, v_existing_class_id
             FROM public.students WHERE student_id = v_student_id;
 
             IF NOT FOUND THEN
                 BEGIN
-                    INSERT INTO public.students (student_id, name, class_id, fingerprint_id)
-                    VALUES (v_student_id, v_name, v_class_id, v_fingerprint_id);
+                    INSERT INTO public.students (student_id, name, class_id, fingerprint_id) VALUES (v_student_id, v_name, v_class_id, v_fingerprint_id);
                     results := results || jsonb_build_object('student_id', v_student_id, 'status', 'inserted', 'message', 'Student information has been added.');
                 EXCEPTION WHEN unique_violation THEN
-                    IF SQLERRM LIKE '%student_id%' THEN
-                        results := results || jsonb_build_object('student_id', v_student_id, 'status', 'error', 'message', 'The student code has already been duplicated');
-                    ELSE
-                        results := results || jsonb_build_object('student_id', v_student_id, 'status', 'error', 'message', 'The fingerprint code has already been duplicated.');
-                    END IF;
+                    IF SQLERRM LIKE '%student_id%' THEN results := results || jsonb_build_object('student_id', v_student_id, 'status', 'error', 'message', 'The student code has already been duplicated');
+                    ELSE results := results || jsonb_build_object('student_id', v_student_id, 'status', 'error', 'message', 'The fingerprint code has already been duplicated.'); END IF;
                 END;
             ELSE
                 IF v_existing_name = v_name AND v_existing_fingerprint = v_fingerprint_id AND v_existing_class_id = v_class_id THEN
                     results := results || jsonb_build_object('student_id', v_student_id, 'status', 'unchanged', 'message', 'The student is information is already in the system.');
                 ELSE
                     BEGIN
-                        UPDATE public.students
-                        SET name = v_name, class_id = v_class_id, fingerprint_id = v_fingerprint_id
-                        WHERE student_id = v_student_id;
+                        UPDATE public.students SET name = v_name, class_id = v_class_id, fingerprint_id = v_fingerprint_id WHERE student_id = v_student_id;
                         results := results || jsonb_build_object('student_id', v_student_id, 'status', 'updated', 'message', 'Student information has been updated.');
                     EXCEPTION WHEN unique_violation THEN
-                        IF SQLERRM LIKE '%student_id%' THEN
-                            results := results || jsonb_build_object('student_id', v_student_id, 'status', 'error', 'message', 'The student code has already been duplicated');
-                        ELSE
-                            results := results || jsonb_build_object('student_id', v_student_id, 'status', 'error', 'message', 'The fingerprint code has already been duplicated.');
-                        END IF;
+                        IF SQLERRM LIKE '%student_id%' THEN results := results || jsonb_build_object('student_id', v_student_id, 'status', 'error', 'message', 'The student code has already been duplicated');
+                        ELSE results := results || jsonb_build_object('student_id', v_student_id, 'status', 'error', 'message', 'The fingerprint code has already been duplicated.'); END IF;
                     END;
                 END IF;
             END IF;
         END IF;
     END LOOP;
-
     RETURN jsonb_build_object('success', true, 'data', results);
 END;
 $$;
 
 -- ==========================================
--- BỔ SUNG: BẢNG QUERY_FINGERPRINT
+-- BỔ SUNG 1: BẢNG QUERY_FINGERPRINT & CẬP NHẬT RLS MỚI
 -- ==========================================
 CREATE TABLE IF NOT EXISTS public.query_fingerprint (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -254,33 +271,41 @@ CREATE TABLE IF NOT EXISTS public.query_fingerprint (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Bật RLS cho bảng mới
+-- BẬT RLS VÀ PHÂN QUYỀN LẠI CHO TRUY VẤN TỪ APP CỦA TEACHER
 ALTER TABLE public.query_fingerprint ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Cho phép đọc dữ liệu query_fingerprint" ON public.query_fingerprint FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Cho phép đọc dữ liệu query_fingerprint" ON public.query_fingerprint;
+DROP POLICY IF EXISTS "Teacher views query_fingerprint of assigned classes" ON public.query_fingerprint;
 
--- ==========================================
--- HÀM RPC ĐỂ ESP32 GỌI LÊN ĐỒNG BỘ TRẠNG THÁI
--- ==========================================
+-- Policy cốt lõi: Giáo viên (chứa auth.uid() trong access_token) chỉ được thấy học sinh thuộc lớp mình
+CREATE POLICY "Teacher views query_fingerprint of assigned classes" ON public.query_fingerprint 
+FOR SELECT TO authenticated 
+USING (
+    EXISTS (
+        SELECT 1 
+        FROM public.students s
+        JOIN public.teacher_class tc ON s.class_id = tc.class_id
+        JOIN public.teachers t ON tc.teacher_id = t.teacher_id
+        WHERE s.student_id = query_fingerprint.student_id 
+          AND t.user_id = auth.uid()
+    )
+);
+
+-- HÀM ĐỂ ESP32 GỌI LÊN (SECURITY DEFINER giúp ESP32 bỏ qua RLS khi Update dữ liệu)
 CREATE OR REPLACE FUNCTION public.sync_sensor_fingerprints(sensor_ids TEXT[])
 RETURNS JSONB 
 LANGUAGE plpgsql 
 SECURITY DEFINER 
 AS $$
 BEGIN
-    -- 1. Tự động đồng bộ học sinh từ bảng students sang query_fingerprint 
-    -- (Đảm bảo danh sách luôn mới nhất trước khi check vân tay)
     INSERT INTO public.query_fingerprint (student_id, name, fingerprint_id)
     SELECT student_id, name, fingerprint_id FROM public.students
     ON CONFLICT (student_id) DO UPDATE
-    SET name = EXCLUDED.name,
-        fingerprint_id = EXCLUDED.fingerprint_id;
+    SET name = EXCLUDED.name, fingerprint_id = EXCLUDED.fingerprint_id;
 
-    -- 2. Cập nhật thành 'Registered' cho các ID CÓ TRONG mảng sensor_ids do ESP32 gửi lên
     UPDATE public.query_fingerprint
     SET fingerprint_data = 'Registered'
     WHERE fingerprint_id = ANY(sensor_ids);
 
-    -- 3. Cập nhật thành 'Not Registered' cho các ID KHÔNG CÓ TRONG mảng sensor_ids
     UPDATE public.query_fingerprint
     SET fingerprint_data = 'Not Registered'
     WHERE NOT (fingerprint_id = ANY(sensor_ids)) OR fingerprint_data IS NULL;
@@ -290,27 +315,33 @@ END;
 $$;
 
 -- ==========================================
--- PHẦN 6: BẢNG NHẬN LỆNH TỪ APP XUỐNG ESP32 (REALTIME)
+-- BỔ SUNG 2: BẢNG LƯU LỆNH ĐIỀU KHIỂN & BẬT REALTIME (WEBSOCKETS)
 -- ==========================================
 CREATE TABLE IF NOT EXISTS public.device_commands (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    command TEXT NOT NULL,          -- Tên lệnh, ví dụ: 'SYNC_FINGERPRINTS'
-    status TEXT DEFAULT 'pending',  -- Trạng thái: pending, completed...
+    command TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Cấu hình Row Level Security (RLS) để cho phép đọc/ghi đối với bảng lệnh
-ALTER TABLE public.device_commands ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow full access to device_commands" 
-ON public.device_commands FOR ALL USING (true) WITH CHECK (true);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        CREATE PUBLICATION supabase_realtime;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'device_commands') THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.device_commands;
+    END IF;
+END
+$$;
 
--- ==========================================
--- BẬT TÍNH NĂNG SUPABASE REALTIME CHO BẢNG NÀY
--- ==========================================
--- Supabase yêu cầu phải add bảng vào publication 'supabase_realtime' thì WebSockets mới hoạt động
-BEGIN;
-  DROP PUBLICATION IF EXISTS supabase_realtime;
-  CREATE PUBLICATION supabase_realtime;
-COMMIT;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.device_commands;
+CREATE OR REPLACE FUNCTION public.request_sync()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    INSERT INTO public.device_commands (command) VALUES ('SYNC_FINGERPRINTS');
+    RETURN jsonb_build_object('success', true, 'message', 'Đã gửi yêu cầu đồng bộ vân tay bằng WebSockets đến ESP32 thành công.');
+END;
+$$;
 ```
