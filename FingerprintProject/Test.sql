@@ -266,7 +266,7 @@ BEGIN
     LIMIT 1;
 
     IF v_inferred_class_id IS NULL THEN
-        RETURN jsonb_build_object('success', false, 'message', 'Giáo viên chưa được phân công quản lý lớp học nào.');
+        RETURN jsonb_build_object('success', false, 'message', 'The teacher has not yet been assigned to manage any class.');
     END IF;
 
     -- 3. VALIDATION 1: KIỂM TRA ĐỊNH DẠNG REGEX THEO YÊU CẦU
@@ -277,7 +277,7 @@ BEGIN
     IF v_invalid_format_students IS NOT NULL THEN
         RETURN jsonb_build_object(
             'success', false, 
-            'message', 'Lỗi: Mã học sinh phải có định dạng H + 6 chữ số (Ví dụ: H230501). Các mã lỗi: ' || v_invalid_format_students
+            'message', 'Student IDs must be in the format H + 6 digits (Example: H230501). Error codes: ' || v_invalid_format_students
         );
     END IF;
 
@@ -291,7 +291,7 @@ BEGIN
     IF v_invalid_year_students IS NOT NULL THEN
         RETURN jsonb_build_object(
             'success', false, 
-            'message', 'Lỗi: Mã học sinh (thành phần X1) không khớp với năm bắt đầu của niên khóa lớp học (' || v_academic_year || '). Yêu cầu kiểm tra lại: ' || v_invalid_year_students
+            'message', 'The student ID of component X1 does not match the start year of the school year (' || v_academic_year || '). Request a re-check: ' || v_invalid_year_students
         );
     END IF;
 
@@ -305,7 +305,7 @@ BEGIN
     IF v_invalid_dob_students IS NOT NULL THEN
         RETURN jsonb_build_object(
             'success', false, 
-            'message', 'Lỗi: Thành phần X2 của mã học sinh (2 số giữa) không khớp với năm trong ngày sinh (date_of_birth). Yêu cầu kiểm tra lại: ' || v_invalid_dob_students
+            'message', 'The student ID of component X2 does not match the year of birth. Request a re-check: ' || v_invalid_dob_students
         );
     END IF;
 
@@ -318,7 +318,7 @@ BEGIN
     IF v_stolen_students IS NOT NULL THEN
         RETURN jsonb_build_object(
             'success', false, 
-            'message', 'Lỗi: Các mã học sinh sau đang trực thuộc lớp của giáo viên khác. Yêu cầu hủy thông tin bên lớp cũ trước khi thêm mới: ' || v_stolen_students
+            'message', 'The following student IDs are currently enrolled in a different teacher is class. Please delete the information from the old class before adding a new one: ' || v_stolen_students
         );
     END IF;
 
@@ -380,7 +380,7 @@ BEGIN
 
     RETURN jsonb_build_object('success', true, 'data', COALESCE(v_results, '[]'::jsonb));
 EXCEPTION WHEN unique_violation THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Lỗi hệ thống: Mã học sinh hoặc mã vân tay đã bị trùng lặp ở nơi khác.');
+    RETURN jsonb_build_object('success', false, 'message', 'The fingerprint code has been duplicated elsewhere.');
 END;
 $$;
 
@@ -432,7 +432,7 @@ BEGIN
     SET fingerprint_data = 'Not Registered'
     WHERE NOT (fingerprint_id = ANY(sensor_ids)) OR fingerprint_data IS NULL;
 
-    RETURN jsonb_build_object('success', true, 'message', 'Đã đồng bộ trạng thái vân tay thành công.');
+    RETURN jsonb_build_object('success', true, 'message', 'Fingerprint status has been successfully synchronized.');
 END;
 $$;
 
@@ -463,6 +463,6 @@ SECURITY DEFINER
 AS $$
 BEGIN
     INSERT INTO public.device_commands (command) VALUES ('SYNC_FINGERPRINTS');
-    RETURN jsonb_build_object('success', true, 'message', 'Đã gửi yêu cầu đồng bộ vân tay bằng WebSockets đến ESP32 thành công.');
+    RETURN jsonb_build_object('success', true, 'message', 'The fingerprint synchronization request to ESP32 has been successfully sent.');
 END;
 $$;

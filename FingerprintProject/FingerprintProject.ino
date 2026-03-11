@@ -8,8 +8,8 @@
 #include "FingerprintEnroll.h"
 #include "FingerprintManager.h"
 
-const char *ssid = "TINIHI"; 
-const char *password = "thanhnguyen201077";   
+const char *ssid = "WifiA9"; // TINIHI
+const char *password = "dtvt@1111"; // thanhnguyen201077  
 const uint8_t ledPins[] = {7, 6, 5, 4}; 
 const uint8_t numLeds = 4;
 
